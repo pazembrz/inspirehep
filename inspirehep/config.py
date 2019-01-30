@@ -15,6 +15,9 @@ You overwrite and set instance-specific configuration by either:
 
 from __future__ import absolute_import, print_function
 
+import os
+import sys
+
 from datetime import timedelta
 
 from invenio_indexer.api import RecordIndexer
@@ -129,11 +132,11 @@ RECORDS_REST_ENDPOINTS = {
         pid_fetcher="recid",
         default_endpoint_prefix=True,
         search_class=LiteratureSearch,
-        #XXX: decide about the links
+        # XXX: decide about the links
         links_factory_imp=lambda x: {},
         indexer_class=RecordIndexer,
         search_type=None,
-        search_index='records-hep',
+        search_index="records-hep",
         record_serializers={
             "application/json": ("inspirehep.records.serializers" ":json_v1_response")
         },
@@ -183,3 +186,14 @@ RECORDS_REST_SORT_OPTIONS = dict(
 
 RECORDS_REST_DEFAULT_SORT = dict(records=dict(query="bestmatch", noquery="mostrecent"))
 """Set default sorting options."""
+
+# Files
+# =====
+BASE_FILES_LOCATION = os.path.join(sys.prefix, "var/data")
+"""Root path to all files direcotries"""
+
+RECORDS_DEFAULT_FILE_LOCATION_NAME = "records"
+"""Name of default records Location reference."""
+
+RECORDS_DEFAULT_STORAGE_CLASS = "S"
+"""Default storage class for record files."""
