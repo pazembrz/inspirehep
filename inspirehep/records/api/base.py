@@ -25,7 +25,6 @@
 from __future__ import absolute_import, division, print_function
 
 from io import BytesIO
-from pathlib import Path
 
 import uuid
 import hashlib
@@ -37,13 +36,13 @@ from inspire_dojson.utils import strip_empty_values
 from inspire_schemas.api import validate as schema_validate
 from inspire_schemas.builders import LiteratureBuilder
 from invenio_db import db
-from invenio_files_rest.models import Bucket
+from invenio_files_rest.models import Bucket, Location, ObjectVersion
 from invenio_pidstore.errors import PIDDoesNotExistError
 from invenio_pidstore.models import PersistentIdentifier, RecordIdentifier
 from invenio_records.models import RecordMetadata
 from invenio_records_files.api import Record
 from invenio_records_files.models import RecordsBuckets
-from sqlalchemy import Text, cast, not_, or_, type_coerce
+from sqlalchemy import cast, not_, or_, type_coerce
 from sqlalchemy.dialects.postgresql import JSONB
 
 
@@ -177,26 +176,49 @@ class InspireRecord(Record):
                 db.session.delete(pid)
             db.session.delete(self.model)
 
-    def add_files(self, documents, figures, src_records=(), only_new=False):
-        if not documents or figures:
-            raise TypeError("No files passed, at least one is needed")
-        files = []
-        for doc in documents:
-            files.append(self._add_file(document=True, **doc))
-        for fig in figures:
-            files.sappend(self._add_file(**fig))
+    def _get_bucket(self, location=None, storage_class=None, record_id=None):
+        """Allows to retreive bucket for any record(default: self)
+        Args:
+            location (str): Bucket location
+                (default: 'RECORDS_DEFAULT_FILE_LOCATION_NAME') from config
+            storage_class (str): Bucket storage class
+                (default: 'RECORDS_DEFAULT_STORAGE_CLASS') from config
+            record_id (int): record to which bucket is asigned
+                (default: self)
 
-    def _get_bucket(self, location=None, storage_class=None):
-        pass
+        Returns: Bucket found in db for selected location, storage_class and record_id
+            If there is no bucket for selected parameters, returns None
 
-    def _create_bucket(self, location=None, storage_class=None):
-        """Create bucket (only one for one storage_class) and return it
-        Overwrites base clase as it is not implemented """
+        """
+        if not storage_class:
+            storage_class = current_app.config["RECORDS_DEFAULT_STORAGE_CLASS"]
+        if not location:
+            location = current_app.config["RECORDS_DEFAULT_FILE_LOCATION_NAME"]
+        if not record_id:
+            record_id = self.id
+
+        location = Location.get_by_name(location)
 
         bucket = RecordsBuckets.query.filter(
-            RecordsBuckets.record_id == self.id, Bucket.storage_class == storage_class
+            RecordsBuckets.record_id == record_id,
+            Bucket.default_storage_class == storage_class,
+            Bucket.default_location == location.id,
         ).one_or_none()
+        return bucket
 
+    def _create_bucket(self, location=None, storage_class=None):
+        """Create bucket and return it, if bucket already exists just returns it.
+        Overwrites base_class._create_bucket method as it is not implemented
+
+        Args:
+            location (str): Bucket location
+                (default: 'RECORDS_DEFAULT_FILE_LOCATION_NAME') from config
+            storage_class (str): Bucket storage class
+                (default: 'RECORDS_DEFAULT_STORAGE_CLASS') from config
+
+        Returns: Bucket for current record, selected location and storage_class
+        """
+        bucket = self._get_bucket(location, storage_class)
         if not bucket:
             if location is None:
                 location = current_app.config["RECORDS_DEFAULT_FILE_LOCATION_NAME"]
@@ -205,79 +227,3 @@ class InspireRecord(Record):
 
             bucket = Bucket.create(location=location, storage_class=storage_class)
         return bucket
-
-    def _download_file_from_url(self, url):
-        """Downloads file and callculates hash for it
-        Args:
-            url: Local or remote url/filepath
-
-        Returns: Data stream, and key (which is a hash)
-
-        """
-        stream = fsopen(url, mode="rb")
-        # TODO: change to stream.read() when fs will be updated to > 2.0
-        # As HTTPOpener is not working with size = -1
-        # (and read() method sets this size as default)
-        # This is workaround until we will update to fs >2.0
-        data = stream._f.wrapped_file.read()
-        stream.close()
-        key = hashlib.sha1(data).hexdigest()
-        return {"data": BytesIO(data), "key": key}
-
-    def _download_file(self, url, original_url=None, **kwargs):
-        if original_url:
-            try:
-                file = self._download_file_from_url(original_url)
-                return file
-            except ResourceNotFoundError:
-                pass
-        if not url.startswith("http"):
-            root_path = current_app.config["BASE_FILES_LOCATION"]
-            records_directory = current_app.config["RECORDS_DEFAULT_FILE_LOCATION_NAME"]
-            url = Path(root_path + records_directory + url).as_uri()
-
-        file = self._download_file_from_url(url)
-        return file
-
-    def _add_file(self, url, filename=None, is_document=False, **kwargs):
-        """Downloads file from url and saves it with `filename` as a proper name
-        Args:
-            url: Url to a file, it can be also path on disk
-            filename: Filename which should be wisible to the user.
-                If not provided, last part of URL will be used as a filename
-            is_document: Flag to inform if it's a document or a figure
-            **kwargs: Additional metadata for the file:
-                'description': works for documents and figures
-                'fulltext': works for documents only
-                'hidden': works for documents only
-                'material': works for documents and figures
-                'caption': works for facets only
-        Returns: Metadata for file
-
-        """
-
-        metadata = kwargs
-        metadata["key"] = key
-        metadata["original_url"] = url
-        metadata["filename"] = filename
-        if "fulltext" not in metadata:
-            metadata["fulltext"] = True
-        if "hidden" not in metadata:
-            metadata["hidden"] = False
-
-        if key in self.files:
-            # If key is already in files
-            # it means this file is already downloaded
-            return self.files[key].data
-
-        self.files[key] = BytesIO(data)
-        file_path = "/api/files/{bucket}/{key}".format(
-            bucket=self.files[key].bucket_id, key=key
-        )
-        metadata["url"] = file_path
-        builder = LiteratureBuilder(record=self)
-        if is_document:
-            builder.add_document(**metadata)
-        else:
-            builder.add_figure(**metadata)
-        return metadata
