@@ -43,9 +43,31 @@ class LiteratureRecord(InspireRecord):
 
     pid_type = "lit"
 
+    @classmethod
+    def create(cls, data, **kwargs):
+        documents = data.pop("documents", None)
+        figures = data.pop("documents", None)
+        record = super().create(data, **kwargs)
+        if documents or figures:
+            record.set_files(documents=documents, figures=figures)
+        return record
+
+    def update(self, data):
+        documents = data.pop("documents", None)
+        figures = data.pop("documents", None)
+        record = super().update(data)
+        if documents or figures:
+            record.set_files(documents=documents, figures=figures)
+        return record
+
     @staticmethod
     def mint(record_uuid, data):
         PidStoreLiterature.mint(record_uuid, data)
+
+    def delete(self):
+        for file in list(self.files.keys):
+            del self.files[file]
+        super().delete()
 
     def set_files(self, documents=None, figures=None):
         """Sets new documents and figures for record.
