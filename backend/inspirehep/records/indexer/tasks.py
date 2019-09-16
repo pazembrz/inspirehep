@@ -74,15 +74,6 @@ def index_record(self, uuid, record_version=None, force_delete=None):
         LOGGER.debug(
             "Record not yet at version on DB", uuid=str(uuid), version=record_version
         )
-        backoff = 2 ** (self.request.retries + 1)
-        if self.max_retries < self.request.retries + 1:
-            LOGGER.debug(
-                "Record not yet at version on DB - Too many retries",
-                uuid=str(uuid),
-                version=record_version,
-                attempts=self.max_retries,
-            )
-        raise self.retry(countdown=backoff, exc=e)
 
     LOGGER.debug("Indexing record", uuid=str(uuid), version=record_version)
 
@@ -100,3 +91,15 @@ def index_record(self, uuid, record_version=None, force_delete=None):
 
     if isinstance(record, LiteratureRecord):
         process_references_for_record(record=record)
+
+
+def retry_task(self, uuid, record_version, exc):
+    backoff = 2 ** (self.request.retries + 1)
+    if self.max_retries < self.request.retries + 1:
+        LOGGER.debug(
+            "Record not yet at version on DB - Too many retries",
+            uuid=str(uuid),
+            version=record_version,
+            attempts=self.max_retries,
+        )
+    raise self.retry(countdown=backoff, exc=exc)
