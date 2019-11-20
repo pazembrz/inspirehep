@@ -6,11 +6,12 @@
 # the terms of the MIT License; see LICENSE file for more details.
 
 """INSPIRE module that adds more fun to the platform."""
-
+import datetime
 import os
 import random
 from functools import partial
 
+import elasticsearch
 import pytest
 from click.testing import CliRunner
 from flask import current_app
@@ -21,6 +22,7 @@ from helpers.factories.models.pidstore import PersistentIdentifierFactory
 from helpers.factories.models.records import RecordMetadataFactory
 from helpers.factories.models.user_access_token import AccessTokenFactory, UserFactory
 from helpers.providers.faker import faker
+from pytest_invenio.fixtures import _es_create_indexes, _es_delete_indexes
 from redis import StrictRedis
 
 from inspirehep.factory import create_app as inspire_create_app
@@ -76,21 +78,57 @@ def create_app():
     return inspire_create_app
 
 
+@pytest.fixture(scope="module")
+def inspire_database(appctx):
+    """Setup database.
+
+    Scope: module
+
+    Normally, tests should use the function-scoped :py:data:`db` fixture
+    instead. This fixture takes care of creating the database/tables and
+    removing the tables once tests are done.
+    """
+    _start = datetime.datetime.now()
+    from invenio_db import db as db_
+    from sqlalchemy_utils.functions import create_database, database_exists
+
+    if not database_exists(str(db_.engine.url)):
+        create_database(str(db_.engine.url))
+    db_.create_all()
+    db_.session.rollback()
+    db_.session.remove()
+    all_tables = db_.metadata.tables
+    for table_name, table_object in all_tables.items():
+        db_.session.execute(f"ALTER TABLE {table_name} DISABLE TRIGGER ALL;")
+        db_.session.execute(table_object.delete())
+        db_.session.execute(f"ALTER TABLE {table_name} ENABLE TRIGGER ALL;")
+    db_.session.commit()
+    yield db_
+    _start = datetime.datetime.now()
+    db_.session.remove()
+
+
 @pytest.fixture(scope="function")
-def db_(database):
+def db_alembic(database):
+    yield database
+
+
+@pytest.fixture(scope="function")
+def db_(inspire_database):
     """Creates a new database session for a test.
     Scope: function
     You must use this fixture if your test connects to the database. The
     fixture will set a save point and rollback all changes performed during
     the test (this is much faster than recreating the entire database).
     """
+    _start = datetime.datetime.now()
     import sqlalchemy as sa
 
-    connection = database.engine.connect()
+    connection = inspire_database.engine.connect()
     transaction = connection.begin()
 
     options = dict(bind=connection, binds={})
-    session = database.create_scoped_session(options=options)
+    session = inspire_database.create_scoped_session(options=options)
 
     session.begin_nested()
 
@@ -109,22 +147,54 @@ def db_(database):
             session.expire_all()
             session.begin_nested()
 
-    old_session = database.session
-    database.session = session
+    old_session = inspire_database.session
+    inspire_database.session = session
 
-    yield database
-
+    yield inspire_database
+    _start = datetime.datetime.now()
     session.remove()
     transaction.rollback()
     connection.close()
-    database.session = old_session
+    inspire_database.session = old_session
 
 
 @pytest.fixture(scope="function")
 def db(db_):
+    _start = datetime.datetime.now()
     init_default_storage_path()
     init_records_files_storage_path()
     yield db_
+
+
+@pytest.fixture(scope="function")
+def es_clear(es):
+    """Clear Elasticsearch indices after test finishes (function scope).
+
+    Scope: function
+
+    This fixture rollback any changes performed to the indexes during a test,
+    in order to leave Elasticsearch in a clean state for the next test.
+    """
+    from invenio_search import current_search, current_search_client
+
+    es.indices.refresh()
+    for indice in es.indices.stats()["indices"].keys():
+        try:
+            es.delete_by_query(indice, "{}")
+        except elasticsearch.exceptions.RequestError:
+            # There is ES error on version 5, when you try to remove records
+            # using delete_by_query and record have internal visioning and
+            # it's current version is 0 it's failing. So in this case only way is to
+            # remove index but invenio 1.1.1 allows to remove all indexes only
+            # After upgrading to invenio 1.2 we will be able
+            # to remove only specified index
+            _es_delete_indexes(current_search)
+            _es_create_indexes(current_search, current_search_client)
+            print("==============================================================")
+            break
+    es.indices.refresh()
+
+    yield es
 
 
 @pytest.fixture(scope="function")
