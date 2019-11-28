@@ -2,21 +2,24 @@ import hashlib
 import uuid
 from io import BytesIO
 
+import magic
 import requests
 import structlog
+from botocore.exceptions import ClientError
 from flask import current_app
+from inspire_schemas.builders import LiteratureBuilder
 from invenio_db import db
-from invenio_files_rest.models import (
-    Bucket,
-    ObjectVersion,
-    Timestamp,
-    timestamp_before_update,
-)
-from invenio_records.errors import MissingModelError
-from invenio_records_files.models import RecordsBuckets
+from invenio_files_rest.models import ObjectVersion, Timestamp, timestamp_before_update
+from redis import StrictRedis
 from sqlalchemy import func, or_
 
-from inspirehep.records.errors import DownloadFileError
+from inspirehep.records.errors import (
+    ContentTypeMismatchError,
+    DataSizeMismatchError,
+    DownloadFileError,
+    HashMismatchError,
+    MissingDataError,
+)
 from inspirehep.records.models import (
     ConferenceLiterature,
     ConferenceToLiteratureRelationshipType,
@@ -160,146 +163,306 @@ class CitationMixin:
 
 
 class FilesMixin:
-    @classmethod
-    def create_bucket(cls, data=None, location=None, storage_class=None):
-        if not location:
-            location = current_app.config["RECORDS_DEFAULT_FILE_LOCATION_NAME"]
-        if not storage_class:
-            storage_class = current_app.config["RECORDS_DEFAULT_STORAGE_CLASS"]
-        return Bucket.create(location=location, storage_class=storage_class)
-
-    def create_bucket_and_link_to_record(self):
-        bucket = self.create_bucket()
-        if bucket:
-            self.dump_bucket(self, bucket)
-            RecordsBuckets.create(record=self.model, bucket=bucket)
-            self._bucket = bucket
-        return bucket
-
-    def delete_removed_files(self, keys):
-        for key in list(self.files.keys):
-            if key not in keys:
-                try:
-                    del self.files[key]
-                except KeyError:
-                    LOGGER.error(
-                        "Key is already deleted",
-                        uuid=self.id,
-                        key=key,
-                        files_keys=self.files.keys,
-                    )
-        self.files.flush()
-
     @property
-    def files(self):
-        if self.model is None:
-            raise MissingModelError()
-        bucket = self.get_bucket()
-        return self.files_iter_cls(self, bucket=bucket, file_cls=self.file_cls)
+    def s3_client(self):
+        return current_app.extensions.get("inspire-s3").s3_client
 
-    def add_file(self, url, original_url=None, key=None, filename=None, **kwargs):
-        if self.local_url(url):
-            LOGGER.info("Local url trying to copy existing file", uuid=self.id, url=url)
-            bucket, key = self.find_bucket_and_key_from_local_url(url)
-            key = self.add_local_file(key, bucket)
-            if not key and original_url:
-                LOGGER.debug(
-                    "Failed to match the local file, trying to download file from original_url",
-                    url=url,
-                    original_url=original_url,
-                )
-                key = self.add_file_from_url(original_url)
-        else:
-            LOGGER.info("Downloading external url", uuid=self.id, url=url)
-            key = self.add_file_from_url(url)
+    def update(self, data, force=False, *args, **kwargs):
+        data = self.add_files(data, force=force)
+        super().update(data, *args, **kwargs)
 
-        if not key:
-            raise DownloadFileError(f"{url} cannot be downloaded")
+    def get_download_url(self, url, original_url=None):
+        download_url = original_url or url
+        if download_url.startswith("http"):
+            return download_url
+        elif url.startswith("http"):
+            return url
+        return f"{current_app.config['PREFERRED_URL_SCHEME']}://{current_app.config['SERVER_NAME']}{download_url}"
 
+    def check_key_and_filename(self, key, filename, url):
         if not filename:
-            filename = self.get_filiname_from_original_url_or_url_or_key(
-                original_url, url, key
+            if not self.is_hash(key):
+                filename = key
+                key = None
+            else:
+                filename = self.get_filiname_from_url_or_key(url, key)
+                LOGGER.info(
+                    "Filename not provided",
+                    uuid=self.id,
+                    key=key,
+                    new_filename=filename,
+                )
+        return key, filename
+
+    def check_file_metadata(self, key, url, force):
+        mimetype = None
+        size = None
+        content_disposition = None
+        if not key:
+            key = self.check_url_on_cache(url)
+        if key:
+            metadata = self.s3_get_file_metadata(key)
+            if metadata:
+                mimetype = metadata.get("ContentType")
+                content_disposition = metadata.get("ContentDisposition")
+                size = metadata.get("ContentLength")
+                LOGGER.info(
+                    "File already on s3", uuid=self.id, key=key, ContentType=mimetype
+                )
+                if size == 0:
+                    LOGGER.warning(
+                        "File size is wrong. Forcing to redownload",
+                        key=key,
+                        recid=self["control_number"],
+                        mimetype=mimetype,
+                        size=size,
+                        content_disposition=content_disposition,
+                    )
+                    force = True
+            else:
+                LOGGER.info("Metadata on s3 is missing.", key=key, uuid=self.id)
+                force = True
+        return key, url, mimetype, size, content_disposition, force
+
+    def add_file(
+        self,
+        url,
+        original_url=None,
+        key=None,
+        filename=None,
+        force=False,
+        *args,
+        **kwargs,
+    ):
+        download_url = self.get_download_url(url=url, original_url=original_url)
+        key, filename = self.check_key_and_filename(key, filename, download_url)
+        mimetype = None
+        key, url, mimetype, size, content_disposition, force = self.check_file_metadata(
+            key, url, force
+        )
+        if not key or force:
+            LOGGER.info(
+                "Downloading url", uuid=self.id, url=download_url, force=force, key=key
             )
-
-        self.files[key]["filename"] = filename
-        self.files.flush()
-
-        data = {"key": key, "filename": filename, "url": self.get_file_url(key)}
-        original_url = url if not original_url else original_url
-        if not self.local_url(original_url):
-            data["original_url"] = original_url
+            key, mimetype, size = self.add_file_from_url(
+                download_url, filename=filename
+            )
+        elif (
+            not mimetype or mimetype == "binary/octet-stream" or not content_disposition
+        ):
+            LOGGER.info("Updating file metadata", recid=self["control_number"], key=key)
+            data_stream = self.get_file_object(key)
+            mimetype, size = self.update_metadata_for_file(
+                key, data_stream.read(), filename
+            )
+            if not key:
+                raise DownloadFileError(f"Cannot download file", url=url)
+        data = {
+            "key": key,
+            "original_url": original_url or url,
+            "filename": filename,
+            "url": self.build_s3_url(key),
+            "mimetype": mimetype,
+            "size": size,
+        }
         return data
 
-    def add_local_file(self, key, bucket=None):
-        file_object = self.get_file_object(key, bucket)
+    def extract_key_from_afs_path(self, afs_path):
+        key = afs_path.split(b"/")[-1]
+        if self.is_hash(key):
+            LOGGER.info(
+                "Found cached file on AFS",
+                afs_path=afs_path,
+                key=key,
+                recid=self["control_number"],
+            )
+            return key.decode("utf-8")
+        return None
 
-        if not file_object:
-            LOGGER.info("Local file not found", uuid=self.id, key=key, bucket=bucket)
-            return None
+    def check_url_on_cache(self, url):
+        redis = StrictRedis.from_url(current_app.config["CACHE_REDIS_URL"])
+        afs_path = redis.hget("afs_file_locations", url)
+        if afs_path:
+            return self.extract_key_from_afs_path(afs_path)
+        return None
 
-        key_hashed = key if self.is_hash(key) else None
+    def verify_metadata(self, metadata, expected_mimetype, expected_size):
+        if expected_mimetype and metadata["ContentType"] != expected_mimetype:
+            raise ContentTypeMismatchError
+        if expected_size and metadata["ContentLength"] != expected_size:
+            raise DataSizeMismatchError
 
-        if not self.verify_hash_of_files(file_object, key_hashed):
-            key_hashed = self.hash_data(file_instance=file_object)
+    def get_all_files_local_metadata(self):
+        if "_files" in self:
+            all_files = self["_files"]
+        else:
+            all_files = []
+            all_files.extend(self.get("figures", []))
+            all_files.extend(self.get("documents", []))
+        return all_files
 
-        if key_hashed not in self.files.keys:
-            file_object.copy(bucket=self.files.bucket.id, key=key_hashed)
-        self.files.flush()
-        return key_hashed
+    def get_local_metadata(self, key):
+        all_files = self.get_all_files_local_metadata()
+        for file in all_files:
+            if file["key"] == key:
+                return file
+        return None
 
-    def add_file_from_url(self, url):
+    def check_file(self, key):
+        response = self.get_object(key)
+        if not response:
+            raise MissingDataError
+
+        local_metadata = self.get_local_metadata(key)
+        # Compare s3 metadata with local metadata
+        if local_metadata:
+            self.verify_metadata(
+                response, local_metadata.get("mimetype"), local_metadata.get("size")
+            )
+
+        data_stream = response["Body"]
+        data = data_stream.read()
+        data_size = len(data)
+        if data_size == 0:
+            raise DataSizeMismatchError
+        key_hashed = self.hash_data(data=data)
+        mimetype = magic.from_buffer(data, mime=True)
+        if key != key_hashed:
+            raise HashMismatchError
+        # Compare s3 metadata with s3 data
+        self.verify_metadata(response, mimetype, data_size)
+
+    def fix_file_if_broken(self, key):
+        try:
+            self.check_file(key)
+        except (HashMismatchError, DataSizeMismatchError):
+            LOGGER.exception(
+                "File is corrupted. Re-download from original url!",
+                recid=self["control_number"],
+                key=key,
+            )
+        except ContentTypeMismatchError:
+            LOGGER.error(
+                "File metadata on s3 are corupted.",
+                recid=self["control_number"],
+                key=key,
+            )
+
+    def verify_and_fix_files(self):
+        all_files = self.get_all_files_local_metadata()
+        for file in all_files:
+            if self.is_hash(file["key"]):
+                self.fix_file_if_broken(file["key"])
+
+    def build_s3_url(self, key):
+        return f"{current_app.config.get('S3_HOSTNAME')}/{self.get_bucket(key)}/{key}"
+
+    def add_file_from_url(self, url, filename, force=False):
         max_retries = current_app.config.get("FILES_DOWNLOAD_MAX_RETRIES", 3)
         data = requests_retry_session(retries=max_retries).get(url, stream=True).content
+        return self.add_file_from_memory(data, filename, force)
+
+    def add_file_from_memory(self, data, filename, force=False):
         key_hashed = self.hash_data(data=data)
-        if key_hashed in self.files.keys:
-            LOGGER.debug("File already exists", key=key_hashed)
-            return key_hashed
+        mimetype = magic.from_buffer(data, mime=True)
+        size = len(data)
+        if force:
+            self.s3_client.delete_object(
+                Bucket=self.get_bucket(key_hashed), Key=key_hashed
+            )
+        if not self.does_file_exists(key_hashed) or force:
+            LOGGER.info(
+                "Pushing file to S3", key=key_hashed, recid=self["control_number"]
+            )
+            self.send_file_to_s3(key_hashed, filename, file=data, mimetype=mimetype)
+        return key_hashed, mimetype, size
 
-        local_file_key_hashed = self.add_local_file(key_hashed)
+    def update_metadata_for_file(self, key, data, filename):
+        mimetype = magic.from_buffer(data, mime=True)
+        size = len(data)
+        self.replace_file_metadata_on_s3(key, filename, mimetype=mimetype)
+        return mimetype, size
 
-        if not local_file_key_hashed:
-            self.files[key_hashed] = BytesIO(data)
-        self.files.flush()
-        return key_hashed
+    def does_file_exists(self, key):
+        if self.s3_get_file_metadata(key):
+            return True
+        return False
 
-    def get_file_url(self, key):
-        api_prefix = current_app.config["FILES_API_PREFIX"]
-        return f"{api_prefix}/{self.files[key].bucket_id}/{key}"
-
-    def get_file_object(self, key, bucket_id=None):
-        if not bucket_id:
-            obj = ObjectVersion.query.filter(
-                ObjectVersion.key == key, ObjectVersion.is_head.is_(True)
-            ).first()
-            if obj and not obj.deleted:
-                return obj
+    def s3_get_file_metadata(self, key):
+        try:
+            object_head = self.s3_client.head_object(
+                Bucket=self.get_bucket(key), Key=key
+            )
+        except ClientError as e:
+            LOGGER.warning(exc=e, key=key, recid=self["control_number"])
             return None
+        return object_head
 
-        return ObjectVersion.get(bucket=bucket_id, key=key)
+    def send_file_to_s3(self, key, filename, file, mimetype=None):
+        try:
+            size = len(file)
+            if not mimetype:
+                mimetype = magic.from_buffer(file, mime=True)
+            self.s3_client.put_object(
+                ACL="public-read",
+                Body=file,
+                Bucket=self.get_bucket(key),
+                Key=key,
+                ContentDisposition=f'attachment; filename="{filename}"',
+                ContentLength=size,
+                ContentType=mimetype,
+            )
+        except ClientError as e:
+            LOGGER.warning(exc=e, key=key, recid=self["control_number"])
+            raise
 
-    def get_filiname_from_original_url_or_url_or_key(self, original_url, url, key):
+    def replace_file_metadata_on_s3(self, key, filename, mimetype):
+        try:
+            self.s3_client.copy_object(
+                ACL="public-read",
+                Bucket=self.get_bucket(key),
+                Key=key,
+                CopySource={"Bucket": self.get_bucket(key), "Key": key},
+                ContentDisposition=f'attachment; filename="{filename}"',
+                ContentType=mimetype,
+                MetadataDirective="REPLACE",
+            )
+        except ClientError as e:
+            LOGGER.warning(exc=e, key=key, recid=self["control_number"])
+            raise
+
+    def get_view_url(self, key):
+        """this is url for local view which serves files"""
+        api_prefix = current_app.config["FILES_API_PREFIX"]
+        return f"{api_prefix}/FILES/{key}"
+
+    def get_object(self, key):
+        try:
+            return self.s3_client.get_object(Bucket=self.get_bucket(key), Key=key)
+        except ClientError as e:
+            LOGGER.warning(exc=e, key=key, recid=self["control_number"])
+        return None
+
+    def get_file_object(self, key):
+        response = self.get_object(key)
+        if response:
+            return response["Body"]
+        return None
+
+    def get_filiname_from_url_or_key(self, url, key):
         filename = None
-        if original_url:
-            filename = self.find_filename_from_url(original_url)
-        elif url:
+        if url:
             filename = self.find_filename_from_url(url)
         return filename or key
 
-    def get_bucket(self):
-        if self.bucket:
-            return self.bucket
-        return self.create_bucket_and_link_to_record()
+    @staticmethod
+    def get_bucket(key):
+        bucket = f"{current_app.config.get('S3_BUCKET_PREFIX')}{key[0]}"
+        return bucket
 
     def verify_hash_of_files(self, file_object, file_hash):
         calculated_hash = self.hash_data(file_instance=file_object)
         return calculated_hash == file_hash
-
-    @staticmethod
-    def find_bucket_and_key_from_local_url(url):
-        bucket, key = url.split("/")[-2:]
-        if not FilesMixin.is_bucket_uuid(bucket) or not key:
-            raise ValueError(f"{url} Not a valid local url.")
-        return bucket, key
 
     @staticmethod
     def find_filename_from_url(url):
@@ -307,11 +470,6 @@ class FilesMixin:
             return url.split("/")[-1]
         except AttributeError:
             return None
-
-    @staticmethod
-    def local_url(url):
-        api_prefix = current_app.config["FILES_API_PREFIX"]
-        return url.startswith(api_prefix)
 
     @staticmethod
     def hash_data(data=None, file_instance=None):
@@ -340,17 +498,54 @@ class FilesMixin:
         raise ValueError("Data for hashing cannot be empty")
 
     @staticmethod
-    def is_bucket_uuid(test_str):
-        """Naive method to check if `test_str` can be ``bucket_uuid``."""
-        try:
-            uuid.UUID(test_str)
-            return True
-        except (ValueError, TypeError):
-            return False
-
-    @staticmethod
     def is_hash(test_str):
         return test_str and len(test_str) == 40
+
+    def add_files(self, data, force=False):
+        if not current_app.config.get("FEATURE_FLAG_ENABLE_FILES", False):
+            LOGGER.info("Feature flag ``FEATURE_FLAG_ENABLE_FILES`` is disabled")
+            return data
+
+        if "deleted" in data and data["deleted"]:
+            LOGGER.info("Record is deleted", uuid=self.id)
+            return data
+
+        documents = data.pop("documents", [])
+        figures = data.pop("figures", [])
+
+        self.pop("documents", None)
+        self.pop("figures", None)
+
+        added_documents = self.add_documents(documents, force=force)
+        if added_documents:
+            data["documents"] = added_documents
+
+        added_figures = self.add_figures(figures, force=force)
+        if added_figures:
+            data["figures"] = added_figures
+
+        return data
+
+    def add_documents(self, documents, force=False):
+        builder = LiteratureBuilder()
+        for document in documents:
+            if document.get("hidden", False):
+                builder.add_document(**document)
+                continue
+            file_data = self.add_file(document=True, **document, force=force)
+            document.update(file_data)
+            if "fulltext" not in document:
+                document["fulltext"] = True
+            builder.add_document(**document)
+        return builder.record.get("documents")
+
+    def add_figures(self, figures, force=False):
+        builder = LiteratureBuilder()
+        for figure in figures:
+            file_data = self.add_file(**figure, force=force)
+            figure.update(file_data)
+            builder.add_figure(**figure)
+        return builder.record.get("figures")
 
 
 class ConferencePaperAndProceedingsMixin:

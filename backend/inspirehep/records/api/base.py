@@ -143,7 +143,7 @@ class InspireRecord(Record):
                     cls.pidstore_handler.mint(id_, data)
             kwargs.pop("disable_orcid_push", None)
             kwargs.pop("disable_relations_update", None)
-            record = super().create(data, id_=id_, **kwargs)
+            record = super().create(data, id_=id_, with_bucket=False, **kwargs)
             record.update_model_created_with_legacy_creation_date()
         return record
 

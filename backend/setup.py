@@ -73,6 +73,7 @@ setup(
             "inspirehep_orcid = inspirehep.orcid:InspireOrcid",
             "inspirehep_records = inspirehep.records:InspireRecords",
             "inspirehep_rt = inspirehep.rt:InspireRtExt",
+            "inspirehep_s3 = inspirehep.records:Boto3",
         ],
         "invenio_base.api_converters": [
             "doipath = inspirehep.pidstore.converters:DOIPathConverter",

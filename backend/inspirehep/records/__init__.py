@@ -7,5 +7,4 @@
 # flake8: noqa
 """Inspire"""
 
-
-from .ext import InspireRecords
+from .ext import InspireRecords, Boto3

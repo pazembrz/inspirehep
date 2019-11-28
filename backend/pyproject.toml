@@ -78,6 +78,8 @@ invenio-xrootd = {git = "https://github.com/inveniosoftware/invenio-xrootd.git",
 xrootd = {version = "^4.11", optional = true}
 prometheus_client = "^0.7.1"
 inspire-dojson = "^63.0"
+boto3 = "^1.10"
+python-magic = "^0.4.15"
 
 [tool.poetry.dev-dependencies]
 freezegun = "*"

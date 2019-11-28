@@ -55,3 +55,19 @@ class WrongRecordSubclass(RecordsError):
 
 class DownloadFileError(Exception):
     pass
+
+
+class HashMismatchError(Exception):
+    pass
+
+
+class ContentTypeMismatchError(Exception):
+    pass
+
+
+class DataSizeMismatchError(Exception):
+    pass
+
+
+class MissingDataError(Exception):
+    pass

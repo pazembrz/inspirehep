@@ -566,3 +566,8 @@ FILES_REST_PERMISSION_FACTORY = allow_all
 FILES_API_PREFIX = "/api/files"
 
 FILES_DOWNLOAD_MAX_RETRIES = 2
+
+S3_HOSTNAME = "https://s3.cern.ch"
+S3_ACCESS_KEY = ""
+S3_SECRET_KEY = ""
+S3_BUCKET_PREFIX = "inspire-files-"

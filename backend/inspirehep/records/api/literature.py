@@ -130,7 +130,6 @@ class LiteratureRecord(
     def update(self, data, disable_orcid_push=False, *args, **kwargs):
         with db.session.begin_nested():
             LiteratureRecord.update_authors_signature_blocks_and_uuids(data)
-            data = self.add_files(data)
             super().update(data, *args, **kwargs)
 
             if disable_orcid_push:
@@ -142,62 +141,6 @@ class LiteratureRecord(
             else:
                 push_to_orcid(self)
             self.push_authors_phonetic_blocks_to_redis()
-
-    def add_files(self, data):
-        if not current_app.config.get("FEATURE_FLAG_ENABLE_FILES", False):
-            LOGGER.info("Feature flag ``FEATURE_FLAG_ENABLE_FILES`` is disabled")
-            return data
-
-        if "deleted" in data and data["deleted"]:
-            LOGGER.info("Record is deleted", uuid=self.id)
-            return data
-
-        documents = data.pop("documents", [])
-        figures = data.pop("figures", [])
-
-        self.pop("documents", None)
-        self.pop("figures", None)
-
-        added_files_keys = []
-        added_documents = self.add_documents(documents)
-        if added_documents:
-            data["documents"] = added_documents
-            added_files_keys = [document["key"] for document in data["documents"]]
-
-        added_figures = self.add_figures(figures)
-        if added_figures:
-            data["figures"] = added_figures
-            added_files_keys = added_files_keys + [
-                figure["key"] for figure in data["figures"]
-            ]
-
-        self.delete_removed_files(added_files_keys)
-
-        if "_files" in self:
-            data["_files"] = copy(self["_files"])
-        data["_bucket"] = self["_bucket"]
-        return data
-
-    def add_documents(self, documents):
-        builder = LiteratureBuilder()
-        for document in documents:
-            if document.get("hidden", False):
-                builder.add_document(**document)
-                continue
-            file_data = self.add_file(document=True, **document)
-            document.update(file_data)
-            if "fulltext" not in document:
-                document["fulltext"] = True
-            builder.add_document(**document)
-        return builder.record.get("documents")
-
-    def add_figures(self, figures):
-        builder = LiteratureBuilder()
-        for figure in figures:
-            file_data = self.add_file(**figure)
-            figure.update(file_data)
-            builder.add_figure(**figure)
-        return builder.record.get("figures")
 
     def get_modified_references(self):
         """Return the ids of the references diff between the latest and the
@@ -227,8 +170,12 @@ class LiteratureRecord(
             "deleted", False
         )
 
-        is_superseded = get_value(self, "related_records[0].relation", "") == "successor"
-        was_superseded = get_value(prev_version, "related_records[0].relation", "") == "successor"
+        is_superseded = (
+            get_value(self, "related_records[0].relation", "") == "successor"
+        )
+        was_superseded = (
+            get_value(prev_version, "related_records[0].relation", "") == "successor"
+        )
         changed_superseded_status = is_superseded ^ was_superseded
 
         changed_earliest_date = (
