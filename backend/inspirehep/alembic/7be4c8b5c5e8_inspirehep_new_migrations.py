@@ -19,11 +19,9 @@ branch_labels = ()
 
 """Migrations which are required and inspirehep is depending on:
     07fb52561c5c - invenio-records,
-    1ba76da94103 - invenio-records-files
-    f741aa746a7d - invenio-files-rest
     e12419831262 - invenio-accounts
 """
-depends_on = "07fb52561c5c", "1ba76da94103", "f741aa746a7d", "e12419831262"
+depends_on = "07fb52561c5c", "e12419831262"
 
 
 def upgrade():

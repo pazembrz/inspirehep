@@ -18,9 +18,8 @@ from inspire_utils.record import get_value
 from invenio_db import db
 from invenio_pidstore.errors import PIDDoesNotExistError
 from invenio_pidstore.models import PersistentIdentifier, RecordIdentifier
+from invenio_records.api import Record
 from invenio_records.models import RecordMetadata
-from invenio_records_files.api import Record
-from invenio_records_files.models import RecordsBuckets
 from sqlalchemy import tuple_
 from sqlalchemy.orm.attributes import flag_modified
 
@@ -143,7 +142,7 @@ class InspireRecord(Record):
                     cls.pidstore_handler.mint(id_, data)
             kwargs.pop("disable_orcid_push", None)
             kwargs.pop("disable_relations_update", None)
-            record = super().create(data, id_=id_, with_bucket=False, **kwargs)
+            record = super().create(data, id_=id_, **kwargs)
             record.update_model_created_with_legacy_creation_date()
         return record
 
@@ -323,8 +322,6 @@ class InspireRecord(Record):
     def hard_delete(self):
         recid = self["control_number"]
         with db.session.begin_nested():
-            RecordsBuckets.query.filter_by(record_id=self.id).delete()
-
             pids = PersistentIdentifier.query.filter(
                 PersistentIdentifier.object_uuid == self.id
             ).all()

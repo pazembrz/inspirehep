@@ -71,16 +71,12 @@ def test_literature_add_documents_and_figures(app, clear_environment):
         data = faker.record("lit", data=data)
         record = LiteratureRecord.create(data)
         record_control_number = record["control_number"]
-        record_bucket = record.bucket
         db.session.commit()
 
         record_from_db = LiteratureRecord.get_record_by_pid_value(record_control_number)
 
         assert record_from_db["_files"]
         assert len(record_from_db["_files"]) == 2
-
-        assert record_from_db.bucket
-        assert "_bucket" in record_from_db
 
         document = record_from_db["documents"][0]
         assert "fulltext" in document
@@ -121,12 +117,9 @@ def test_literature_update_documents_and_figures(app, clear_environment):
         data = faker.record("lit", data=data)
         record = LiteratureRecord.create(data)
         record_control_number = record["control_number"]
-        record_bucket = record.bucket
         db.session.commit()
 
         record_from_db = LiteratureRecord.get_record_by_pid_value(record_control_number)
-        assert record_from_db.bucket
-        assert "_bucket" in record_from_db
 
         data_updated = {
             "documents": [
@@ -153,9 +146,6 @@ def test_literature_update_documents_and_figures(app, clear_environment):
         db.session.commit()
 
         record_from_db = LiteratureRecord.get_record_by_pid_value(record_control_number)
-
-        assert record_from_db.bucket
-        assert "_bucket" in record_from_db
 
         expected_figure_filename = "WZ_fig4.png"
         expected_figure_original_url = data_updated["figures"][0]["url"]
@@ -202,13 +192,9 @@ def test_literature_update_only_documents(app, clear_environment):
         data = faker.record("lit", data=data)
         record = LiteratureRecord.create(data)
         record_control_number = record["control_number"]
-        record_bucket = record.bucket
         db.session.commit()
 
         record_from_db = LiteratureRecord.get_record_by_pid_value(record_control_number)
-
-        assert record_from_db.bucket
-        assert "_bucket" in record_from_db
 
         data_updated = {
             "documents": [
@@ -228,9 +214,6 @@ def test_literature_update_only_documents(app, clear_environment):
 
         db.session.commit()
         record_from_db = LiteratureRecord.get_record_by_pid_value(record_control_number)
-
-        assert record_from_db.bucket
-        assert "_bucket" in record_from_db
 
         assert record_from_db["_files"]
         assert len(record_from_db["_files"]) == 1
@@ -268,12 +251,9 @@ def test_literature_update_only_figures(app, clear_environment):
         data = faker.record("lit", data=data)
         record = LiteratureRecord.create(data)
         record_control_number = record["control_number"]
-        record_bucket = record.bucket
         db.session.commit()
 
         record_from_db = LiteratureRecord.get_record_by_pid_value(record_control_number)
-        assert record_from_db.bucket
-        assert "_bucket" in record_from_db
 
         data_updated = {
             "figures": [
@@ -292,8 +272,6 @@ def test_literature_update_only_figures(app, clear_environment):
 
         db.session.commit()
         record_from_db = LiteratureRecord.get_record_by_pid_value(record_control_number)
-        assert record_from_db.bucket
-        assert "_bucket" in record_from_db
 
         assert record_from_db["_files"]
         assert len(record_from_db["_files"]) == 1
@@ -333,18 +311,12 @@ def test_literature_update_without_documents_and_figures(app, clear_environment)
 
         record_from_db = LiteratureRecord.get_record_by_pid_value(record_control_number)
 
-        assert record_from_db.bucket
-        assert "_bucket" in record_from_db
-
         del record_from_db["documents"]
         del record_from_db["figures"]
         record_from_db.update(dict(record_from_db))
 
         db.session.commit()
         record_from_db = LiteratureRecord.get_record_by_pid_value(record_control_number)
-
-        assert record_from_db.bucket
-        assert "_bucket" in record_from_db
 
         assert [] == record_from_db["_files"]
         assert "documents" not in record_from_db
@@ -372,20 +344,15 @@ def test_literature_add_documents_and_figures_and_then_delete(app, clear_environ
 
         data = faker.record("lit", data=data)
         record = LiteratureRecord.create(data)
-        record_bucket = record.bucket
         record_control_number = record["control_number"]
         db.session.commit()
 
         record_from_db = LiteratureRecord.get_record_by_pid_value(record_control_number)
-        assert record_from_db.bucket
-        assert "_bucket" in record_from_db
 
         record.delete()
         db.session.commit()
 
         record_from_db = LiteratureRecord.get_record_by_pid_value(record_control_number)
-        assert record_from_db.bucket
-        assert "_bucket" in record_from_db
 
         assert "_files" in record_from_db
         assert "documents" in record_from_db
@@ -422,13 +389,9 @@ def test_literature_add_documents_with_hidden_document_and_figures(
         data = faker.record("lit", data=data)
         record = LiteratureRecord.create(data)
         record_control_number = record["control_number"]
-        record_bucket = record.bucket
         db.session.commit()
 
         record_from_db = LiteratureRecord.get_record_by_pid_value(record_control_number)
-
-        assert record_from_db.bucket
-        assert "_bucket" in record_from_db
 
         expected_files_length = 2
         result_files_filenames = [
@@ -485,12 +448,9 @@ def test_literature_update_documents_with_hidden_document_and_figures(
         data = faker.record("lit", data=data)
         record = LiteratureRecord.create(data)
         record_control_number = record["control_number"]
-        record_bucket = record.bucket
         db.session.commit()
 
         record_from_db = LiteratureRecord.get_record_by_pid_value(record_control_number)
-        assert record_from_db.bucket
-        assert "_bucket" in record_from_db
 
         data_updated = {
             "documents": [
@@ -520,9 +480,6 @@ def test_literature_update_documents_with_hidden_document_and_figures(
         db.session.commit()
 
         record_from_db = LiteratureRecord.get_record_by_pid_value(record_control_number)
-
-        assert record_from_db.bucket
-        assert "_bucket" in record_from_db
 
         expected_files_length = 2
         result_files_filenames = [
@@ -577,13 +534,9 @@ def test_literature_update_only_documents_with_hidden_document(app, clear_enviro
         data = faker.record("lit", data=data)
         record = LiteratureRecord.create(data)
         record_control_number = record["control_number"]
-        record_bucket = record.bucket
         db.session.commit()
 
         record_from_db = LiteratureRecord.get_record_by_pid_value(record_control_number)
-
-        assert record_from_db.bucket
-        assert "_bucket" in record_from_db
 
         data_updated = {
             "documents": [
@@ -602,9 +555,6 @@ def test_literature_update_only_documents_with_hidden_document(app, clear_enviro
         db.session.commit()
 
         record_from_db = LiteratureRecord.get_record_by_pid_value(record_control_number)
-
-        assert record_from_db.bucket
-        assert "_bucket" in record_from_db
 
         expected_files_length = 0
         result_files_length = len(record_from_db["_files"])

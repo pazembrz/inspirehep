@@ -27,7 +27,7 @@ def test_conferences_json_without_login(api_client, db, create_record, datadir):
         "closing_date": "2012-05-25",
         "cnum": "C12-05-21.5",
         "contact_details": [{"email": "fs4loc@konan-u.ac.jp"}],
-        "control_number": 1185692,
+        "control_number": 1_185_692,
         "deleted": False,
         "inspire_categories": [{"term": "Astrophysics"}],
         "legacy_creation_date": "2012-09-17",
@@ -44,7 +44,6 @@ def test_conferences_json_without_login(api_client, db, create_record, datadir):
                 "value": "http://tpweb2.phys.konan-u.ac.jp/~FirstStar4/",
             }
         ],
-        "_bucket": str(record.bucket),
     }
     expected_created = utils.isoformat(record.created)
     expected_updated = utils.isoformat(record.updated)
@@ -82,7 +81,6 @@ def test_conferences_json_with_logged_in_cataloger(
 
     expected_metadata = {
         "$schema": "https://inspire/schemas/records/conferences.json",
-        "_bucket": str(record.bucket),
         "_collections": ["Conferences"],
         "_private_notes": [{"value": "A private note"}],
         "control_number": 1,
@@ -111,7 +109,7 @@ def test_conferences_detail(api_client, db, create_record, datadir):
         "closing_date": "2012-05-25",
         "cnum": "C12-05-21.5",
         "contact_details": [{"email": "fs4loc@konan-u.ac.jp"}],
-        "control_number": 1185692,
+        "control_number": 1_185_692,
         "deleted": False,
         "inspire_categories": [{"term": "Astrophysics"}],
         "legacy_creation_date": "2012-09-17",
@@ -128,7 +126,6 @@ def test_conferences_detail(api_client, db, create_record, datadir):
                 "value": "http://tpweb2.phys.konan-u.ac.jp/~FirstStar4/",
             }
         ],
-        "_bucket": str(record.bucket),
     }
     expected_created = utils.isoformat(record.created)
     expected_updated = utils.isoformat(record.updated)
@@ -159,7 +156,7 @@ def test_conferences_search_json(api_client, db, create_record, datadir):
         "closing_date": "2012-05-25",
         "cnum": "C12-05-21.5",
         "contact_details": [{"email": "fs4loc@konan-u.ac.jp"}],
-        "control_number": 1185692,
+        "control_number": 1_185_692,
         "deleted": False,
         "inspire_categories": [{"term": "Astrophysics"}],
         "legacy_creation_date": "2012-09-17",
@@ -176,7 +173,6 @@ def test_conferences_search_json(api_client, db, create_record, datadir):
                 "value": "http://tpweb2.phys.konan-u.ac.jp/~FirstStar4/",
             }
         ],
-        "_bucket": str(record.bucket),
     }
 
     expected_created = utils.isoformat(record.created)

@@ -40,7 +40,6 @@ def test_literature_search_application_json_get(
         "titles": [{"title": "Partner walk again seek job."}],
         "citation_count": 0,
         "author_count": 0,
-        "_bucket": str(record._bucket),
     }
 
     response = api_client.get("/literature", headers=headers)
@@ -70,7 +69,6 @@ def test_literature_search_application_json_ui_get(
         "titles": [{"title": "Partner walk again seek job."}],
         "preprint_date": "2019-07-02",
         "date": "Jul 2, 2019",
-        "_bucket": str(record._bucket),
     }
 
     response = api_client.get("/literature", headers=headers)
@@ -492,9 +490,7 @@ def test_literature_facets_collaboration(api_client, db, es_clear, create_record
     ]
 
     expected_data = deepcopy(data_1)
-    expected_data.update(
-        citation_count=0, author_count=0, _bucket=str(record_1._bucket)
-    )
+    expected_data.update(citation_count=0, author_count=0)
 
     assert expected_status_code == response_status_code
     assert expected_collaboration_buckets == response_data_collaboration_buckets
@@ -703,7 +699,6 @@ def test_literature_search_cataloger_gets_fermilab_collection(
         "titles": [{"title": "Partner walk again seek job."}],
         "citation_count": 0,
         "author_count": 0,
-        "_bucket": str(record._bucket),
     }
 
     response = api_client.get("/literature")

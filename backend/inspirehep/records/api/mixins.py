@@ -9,7 +9,6 @@ from botocore.exceptions import ClientError
 from flask import current_app
 from inspire_schemas.builders import LiteratureBuilder
 from invenio_db import db
-from invenio_files_rest.models import ObjectVersion, Timestamp, timestamp_before_update
 from redis import StrictRedis
 from sqlalchemy import func, or_
 
@@ -30,7 +29,6 @@ LOGGER = structlog.getLogger()
 
 # We need to turn this odd as updating many files at the same time by many workers
 # is causing deadlocks due to updating "update" column in invenio files_files
-db.event.remove(Timestamp, "before_update", timestamp_before_update)
 
 
 def requests_retry_session(retries=3):
@@ -430,11 +428,6 @@ class FilesMixin:
         except ClientError as e:
             LOGGER.warning(exc=e, key=key, recid=self["control_number"])
             raise
-
-    def get_view_url(self, key):
-        """this is url for local view which serves files"""
-        api_prefix = current_app.config["FILES_API_PREFIX"]
-        return f"{api_prefix}/FILES/{key}"
 
     def get_object(self, key):
         try:

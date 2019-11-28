@@ -43,9 +43,6 @@
         },
         "_files": {
           "properties": {
-            "bucket": {
-              "type": "keyword"
-            },
             "checksum": {
               "type": "keyword"
             },

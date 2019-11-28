@@ -1022,7 +1022,6 @@ def test_regression_update_record_without_losing_the_bucket(
             {
                 "key": "050e8ca41b808a48110fb32bf0d79bd3033bb36b",
                 "size": 234_963,
-                "bucket": "aa4a76dd-dc41-4c45-9163-925a3ed71161",
                 "file_id": "923b5782-9fa2-4b97-aa70-f9a79e49c5b9",
                 "checksum": "md5:635694cf6829382854d7fc84b72f2d8d",
                 "filename": "arXiv%3A0809.3951.pdf%3B2",
@@ -1048,15 +1047,11 @@ def test_regression_update_record_without_losing_the_bucket(
         record_from_db = LiteratureRecord.get_record_by_pid_value(record_control_number)
         record_from_db.update(dict(record_from_db))
 
-        assert record_from_db.bucket
         assert "_files" in record_from_db
-        assert "_bucket" in record_from_db
         assert "documents" in record_from_db
 
         record_from_db = LiteratureRecord.get_record_by_pid_value(record_control_number)
         record_from_db.update(dict(record_from_db))
 
-        assert record_from_db.bucket
         assert "_files" in record_from_db
-        assert "_bucket" in record_from_db
         assert "documents" in record_from_db

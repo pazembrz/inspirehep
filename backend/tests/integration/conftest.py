@@ -26,10 +26,6 @@ from redis import StrictRedis
 
 from inspirehep.factory import create_app as inspire_create_app
 from inspirehep.records.api import InspireRecord
-from inspirehep.records.fixtures import (
-    init_default_storage_path,
-    init_records_files_storage_path,
-)
 
 
 @pytest.fixture(scope="module")
@@ -88,7 +84,7 @@ def database(appctx):
 
 
 @pytest.fixture(scope="function")
-def db_(database):
+def db(database):
     """Creates a new database session for a test.
     Scope: function
     You must use this fixture if your test connects to the database. The
@@ -128,13 +124,6 @@ def db_(database):
     transaction.rollback()
     connection.close()
     database.session = old_session
-
-
-@pytest.fixture(scope="function")
-def db(db_):
-    init_default_storage_path()
-    init_records_files_storage_path()
-    yield db_
 
 
 @pytest.fixture(scope="function")
