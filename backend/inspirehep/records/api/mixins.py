@@ -536,7 +536,12 @@ class FilesMixin:
             document.update(file_data)
             if "fulltext" not in document:
                 document["fulltext"] = True
-            builder.add_document(**document)
+            try:
+                builder.add_document(**document)
+            except ValueError as e:
+                LOGGER.exception(
+                    recid=self["control_number"], document=document.get("key")
+                )
         return builder.record.get("documents")
 
     def add_figures(self, figures, force=False):
@@ -544,7 +549,10 @@ class FilesMixin:
         for figure in figures:
             file_data = self.add_file(**figure, force=force)
             figure.update(file_data)
-            builder.add_figure(**figure)
+            try:
+                builder.add_figure(**figure)
+            except ValueError as e:
+                LOGGER.exception(recid=self["control_number"], figure=figure.get("key"))
         return builder.record.get("figures")
 
 
