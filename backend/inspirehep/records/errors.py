@@ -71,3 +71,7 @@ class DataSizeMismatchError(Exception):
 
 class MissingDataError(Exception):
     pass
+
+
+class MissingPermissions(Exception):
+    pass

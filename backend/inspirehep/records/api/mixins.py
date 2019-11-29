@@ -19,6 +19,7 @@ from inspirehep.records.errors import (
     DownloadFileError,
     HashMismatchError,
     MissingDataError,
+    MissingPermissions,
 )
 from inspirehep.records.models import (
     ConferenceLiterature,
@@ -236,7 +237,6 @@ class FilesMixin:
     ):
         download_url = self.get_download_url(url=url, original_url=original_url)
         key, filename = self.check_key_and_filename(key, filename, download_url)
-        mimetype = None
         key, url, mimetype, size, content_disposition, force = self.check_file_metadata(
             key, url, force
         )
@@ -245,7 +245,7 @@ class FilesMixin:
                 "Downloading url", uuid=self.id, url=download_url, force=force, key=key
             )
             key, mimetype, size = self.add_file_from_url(
-                download_url, filename=filename
+                download_url, filename=filename, force=force
             )
         elif (
             not mimetype or mimetype == "binary/octet-stream" or not content_disposition
@@ -286,11 +286,25 @@ class FilesMixin:
             return self.extract_key_from_afs_path(afs_path)
         return None
 
-    def verify_metadata(self, metadata, expected_mimetype, expected_size):
+    def verify_metadata(
+        self,
+        metadata,
+        expected_mimetype,
+        expected_size,
+        expected_read_for_group="http://acs.amazonaws.com/groups/global/AllUsers",
+    ):
         if expected_mimetype and metadata["ContentType"] != expected_mimetype:
             raise ContentTypeMismatchError
         if expected_size and metadata["ContentLength"] != expected_size:
             raise DataSizeMismatchError
+        if expected_read_for_group:
+            for grantee in metadata.get("Grants", []):
+                if (
+                    grantee["Grantee"].get("URI") == expected_read_for_group
+                    and grantee.get("Permission") == "READ"
+                ):
+                    return
+            raise MissingPermissions
 
     def get_all_files_local_metadata(self):
         if "_files" in self:
@@ -309,18 +323,18 @@ class FilesMixin:
         return None
 
     def check_file(self, key):
-        response = self.get_object(key)
+        response = self.s3_get_file_metadata(key)
         if not response:
             raise MissingDataError
 
         local_metadata = self.get_local_metadata(key)
         # Compare s3 metadata with local metadata
+
         if local_metadata:
             self.verify_metadata(
                 response, local_metadata.get("mimetype"), local_metadata.get("size")
             )
-
-        data_stream = response["Body"]
+        data_stream = self.get_file_object(key)
         data = data_stream.read()
         data_size = len(data)
         if data_size == 0:
@@ -332,27 +346,35 @@ class FilesMixin:
         # Compare s3 metadata with s3 data
         self.verify_metadata(response, mimetype, data_size)
 
-    def fix_file_if_broken(self, key):
+    def verify_file(
+        self, key, url, original_url=None, filename=None, fix=False, **kwargs
+    ):
         try:
             self.check_file(key)
-        except (HashMismatchError, DataSizeMismatchError):
+        except (HashMismatchError, DataSizeMismatchError, MissingDataError) as e:
             LOGGER.exception(
                 "File is corrupted. Re-download from original url!",
                 recid=self["control_number"],
                 key=key,
+                exc=e,
             )
-        except ContentTypeMismatchError:
+            if fix:
+                self.add_file_from_url(original_url, filename, force=True)
+        except (ContentTypeMismatchError, MissingPermissions) as e:
             LOGGER.error(
                 "File metadata on s3 are corupted.",
                 recid=self["control_number"],
                 key=key,
+                exc=e,
             )
+            if fix:
+                self.add_file_from_url(original_url or url, filename)
 
-    def verify_and_fix_files(self):
+    def verify_record_files(self, fix=False):
         all_files = self.get_all_files_local_metadata()
         for file in all_files:
             if self.is_hash(file["key"]):
-                self.fix_file_if_broken(file["key"])
+                self.verify_file(fix=fix, **file)
 
     def build_s3_url(self, key):
         return f"{current_app.config.get('S3_HOSTNAME')}/{self.get_bucket(key)}/{key}"
@@ -366,11 +388,23 @@ class FilesMixin:
         key_hashed = self.hash_data(data=data)
         mimetype = magic.from_buffer(data, mime=True)
         size = len(data)
-        if force:
-            self.s3_client.delete_object(
-                Bucket=self.get_bucket(key_hashed), Key=key_hashed
-            )
-        if not self.does_file_exists(key_hashed) or force:
+        s3_file_metadata = self.s3_get_file_metadata(key_hashed)
+        try:
+            self.verify_metadata(s3_file_metadata, mimetype, size)
+        except (ContentTypeMismatchError, MissingPermissions):
+            self.update_metadata_for_file(key_hashed, data, filename)
+        except DataSizeMismatchError:
+            force = True
+        if not s3_file_metadata or force:
+            if force:
+                LOGGER.warning(
+                    "Forcing to push file to s3. Deleting old data if exists",
+                    recid=self["control_number"],
+                    key=key_hashed,
+                )
+                self.s3_client.delete_object(
+                    Bucket=self.get_bucket(key_hashed), Key=key_hashed
+                )
             LOGGER.info(
                 "Pushing file to S3", key=key_hashed, recid=self["control_number"]
             )
@@ -383,23 +417,26 @@ class FilesMixin:
         self.replace_file_metadata_on_s3(key, filename, mimetype=mimetype)
         return mimetype, size
 
-    def does_file_exists(self, key):
-        if self.s3_get_file_metadata(key):
-            return True
-        return False
-
     def s3_get_file_metadata(self, key):
         try:
             object_head = self.s3_client.head_object(
                 Bucket=self.get_bucket(key), Key=key
             )
+            acls = self.s3_client.get_object_acl(Bucket=self.get_bucket(key), Key=key)
         except ClientError as e:
             LOGGER.warning(exc=e, key=key, recid=self["control_number"])
             return None
+        object_head["Grants"] = acls["Grants"]
         return object_head
 
     def send_file_to_s3(self, key, filename, file, mimetype=None):
         try:
+            LOGGER.info(
+                "Pushing file to s3",
+                recid=self["control_number"],
+                key=key,
+                filename=filename,
+            )
             size = len(file)
             if not mimetype:
                 mimetype = magic.from_buffer(file, mime=True)
@@ -418,6 +455,12 @@ class FilesMixin:
 
     def replace_file_metadata_on_s3(self, key, filename, mimetype):
         try:
+            LOGGER.info(
+                "Updating file metadata on s3",
+                recid=self["control_number"],
+                key=key,
+                filename=filename,
+            )
             self.s3_client.copy_object(
                 ACL="public-read",
                 Bucket=self.get_bucket(key),
