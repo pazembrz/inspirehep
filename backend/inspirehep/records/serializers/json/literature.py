@@ -8,7 +8,10 @@
 from invenio_records_rest.serializers.response import search_responsify
 from marshmallow import Schema
 
-from inspirehep.accounts.api import is_superuser_or_cataloger_logged_in
+from inspirehep.accounts.api import (
+    is_api_service_call,
+    is_superuser_or_cataloger_logged_in,
+)
 from inspirehep.records.marshmallow.base import wrap_schema_class_with_metadata
 from inspirehep.records.marshmallow.literature import (
     LiteratureAdminSchema,
@@ -16,6 +19,7 @@ from inspirehep.records.marshmallow.literature import (
     LiteratureDetailSchema,
     LiteratureListWrappedSchema,
     LiteraturePublicSchema,
+    LiteratureServiceAPISchema,
 )
 from inspirehep.records.serializers.response import record_responsify
 from inspirehep.serializers import (
@@ -31,6 +35,10 @@ facets_json_response_search = search_responsify(facets_json, "application/json")
 # Literature
 literature_json = ConditionalMultiSchemaJSONSerializer(
     [
+        (
+            lambda _: is_api_service_call(),
+            wrap_schema_class_with_metadata(LiteratureServiceAPISchema),
+        ),
         (
             lambda _: is_superuser_or_cataloger_logged_in(),
             wrap_schema_class_with_metadata(LiteratureAdminSchema),

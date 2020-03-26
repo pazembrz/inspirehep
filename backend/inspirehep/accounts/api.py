@@ -21,6 +21,16 @@ def is_superuser_or_cataloger_logged_in():
     return False
 
 
+def is_api_service_call():
+    if (
+        current_user
+        and current_user.is_authenticated
+        and current_user.has_role(Roles.service.value)
+    ):
+        return True
+    return False
+
+
 def is_loggedin_user_email(email):
     if current_user and current_user.is_authenticated:
         return current_user.email == email

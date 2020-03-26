@@ -7,8 +7,11 @@
 
 from flask import Blueprint, abort, current_app, jsonify, request
 from flask.views import MethodView
+from invenio_pidstore.models import PersistentIdentifier
 from invenio_records_rest.views import pass_record
 
+from inspirehep.access_control import APIAccessPermissionCheck
+from inspirehep.records.api import InspireRecord, LiteratureRecord
 from inspirehep.records.api.literature import import_article
 from inspirehep.records.errors import (
     ExistingArticleError,
@@ -18,9 +21,16 @@ from inspirehep.records.errors import (
     MaxResultWindowRESTError,
     UnknownImportIdentifierError,
 )
+from inspirehep.records.marshmallow.base import wrap_schema_class_with_metadata
+from inspirehep.records.marshmallow.literature import (
+    LiteratureAdminSchema,
+    LiteratureServiceAPISchema,
+)
 from inspirehep.records.marshmallow.literature.references import (
     LiteratureReferencesSchema,
 )
+from inspirehep.records.serializers.response import record_responsify
+from inspirehep.serializers import JSONSerializer
 from inspirehep.submissions.serializers import literature_v1
 
 from ..search.api import LiteratureSearch
@@ -80,6 +90,24 @@ class LiteratureReferencesResource(MethodView):
         return jsonify(data)
 
 
+class LiteratureRecordByUUID(MethodView):
+    view_name = "access_record_by_uuid"
+
+    def get(self, uuid):
+        APIAccessPermissionCheck(None).can()
+        record = InspireRecord.get_record(uuid)
+        pid = PersistentIdentifier.query.filter_by(
+            object_uuid=record.id, pid_type="lit"
+        ).one()
+        if isinstance(record, LiteratureRecord):
+            serializer = JSONSerializer(
+                wrap_schema_class_with_metadata(LiteratureServiceAPISchema)
+            )
+        else:
+            raise NotImplementedError
+        return record_responsify(serializer, "application/json")(pid, record)
+
+
 @blueprint.route("/literature/import/<path:identifier>", methods=("GET",))
 def import_article_view(identifier):
     try:
@@ -109,6 +137,8 @@ literature_citations_view = LiteratureCitationsResource.as_view(
 literature_references_view = LiteratureReferencesResource.as_view(
     LiteratureReferencesResource.view_name
 )
+
+access_record_by_uuid = LiteratureRecordByUUID.as_view(LiteratureRecordByUUID.view_name)
 blueprint.add_url_rule(
     '/literature/<pid(lit,record_class="inspirehep.records.api:LiteratureRecord"):pid_value>/citations',
     view_func=literature_citations_view,
@@ -117,3 +147,5 @@ blueprint.add_url_rule(
     '/literature/<pid(lit,record_class="inspirehep.records.api:LiteratureRecord"):pid_value>/references',
     view_func=literature_references_view,
 )
+
+blueprint.add_url_rule("/by_uuid/<uuid>", view_func=access_record_by_uuid)

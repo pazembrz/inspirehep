@@ -35,3 +35,11 @@ class AuthorsAdminSchema(AuthorsRawSchema):
 
 class AuthorsOnlyControlNumberSchema(Schema):
     control_number = fields.Raw(dump_only=True)
+
+
+class AuthorsServiceAPISchema(AuthorsRawSchema):
+    version_id = fields.Method("get_version_id", dump_only=True)
+    revision_id = fields.Raw(dump_only=True)
+
+    def get_version_id(self, record):
+        return record.model.version_id

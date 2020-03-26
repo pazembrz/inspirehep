@@ -51,3 +51,14 @@ class LiteraturePublicSchema(LiteratureRawSchema):
 class LiteratureAdminSchema(LiteratureRawSchema):
     class Meta:
         exclude = FIELDS_TO_EXCLUDE
+
+
+class LiteratureServiceAPISchema(LiteratureAdminSchema):
+    class Meta:
+        exclude = FIELDS_TO_EXCLUDE + ["citation_count"]
+
+    version_id = fields.Method("get_version_id", dump_only=True)
+    revision_id = fields.Raw(dump_only=True)
+
+    def get_version_id(self, record):
+        return record.model.version_id
