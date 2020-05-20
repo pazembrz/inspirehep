@@ -50,6 +50,7 @@ class Suggester extends Component {
       const completionValue = extractItemCompletionValue(result);
       return (
         <AutoComplete.Option
+          key={extractKey ? extractKey(result) : completionValue}
           value={extractKey ? extractKey(result) : completionValue}
           result={result}
         >
