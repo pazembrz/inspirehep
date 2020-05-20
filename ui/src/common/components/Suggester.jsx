@@ -41,13 +41,16 @@ class Suggester extends Component {
 
   renderSuggestions() {
     const { results } = this.state;
-    const { renderResultItem, extractItemCompletionValue } = this.props;
+    const {
+      renderResultItem,
+      extractItemCompletionValue,
+      extractKey,
+    } = this.props;
     return results.map(result => {
       const completionValue = extractItemCompletionValue(result);
       return (
         <AutoComplete.Option
-          key={completionValue}
-          value={completionValue}
+          value={extractKey ? extractKey(result) : completionValue}
           result={result}
         >
           {renderResultItem ? renderResultItem(result) : completionValue}
@@ -59,6 +62,7 @@ class Suggester extends Component {
   render() {
     const {
       renderResultItem,
+      extractKey,
       extractItemCompletionValue,
       suggesterName,
       pidType,
@@ -76,6 +80,7 @@ Suggester.propTypes = {
   pidType: PropTypes.string.isRequired,
   suggesterName: PropTypes.string.isRequired,
   renderResultItem: PropTypes.func,
+  extractKey: PropTypes.func,
   extractItemCompletionValue: PropTypes.func,
 };
 

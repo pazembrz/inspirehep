@@ -32,6 +32,10 @@ export default function cleanupFormData(data) {
     }
 
     if (typeof value === 'string') {
+      const position = value.indexOf('\u2800');
+      if (position > 0) {
+        value = value.substring(0, position);
+      }
       value = value.trim();
       if (value === '') {
         return;

@@ -6,12 +6,22 @@ function getSourceNameValue(suggestion) {
   return suggestion._source.name.value;
 }
 
-function renderAuthorSuggestion(suggestion) {
-  const name = getSourceNameValue(suggestion);
-
+function getAuthorCurrentPosition(suggestion) {
   const { positions } = suggestion._source;
   const currentPosition =
     positions && positions.find(position => position.current);
+  return currentPosition;
+}
+
+function getAuthorUniqueKey(suggestion) {
+  const name = getSourceNameValue(suggestion);
+  const currentPosition = getAuthorCurrentPosition(suggestion);
+  return `${name}\u2800(${currentPosition.institution})`;
+}
+
+function renderAuthorSuggestion(suggestion) {
+  const name = getSourceNameValue(suggestion);
+  const currentPosition = getAuthorCurrentPosition(suggestion);
 
   return (
     <span>
@@ -28,6 +38,7 @@ export default function AuthorSuggesterField(props) {
       suggesterName="author"
       renderResultItem={renderAuthorSuggestion}
       extractItemCompletionValue={getSourceNameValue}
+      extractKey={getAuthorUniqueKey}
       component={SuggesterField}
     />
   );
