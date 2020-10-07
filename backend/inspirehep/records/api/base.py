@@ -306,6 +306,11 @@ class InspireRecord(Record):
         This method does nothing, instead all the work is done in ``update``.
         """
 
+    def process_deleted_records(self):
+        for record in self.get_linked_records_from_field("deleted_records"):
+            if record.id != self.id:
+                record.delete()
+
     def update(self, data, *args, **kwargs):
         if not self.get("deleted", False):
             if "control_number" not in data:
@@ -326,6 +331,7 @@ class InspireRecord(Record):
             if data.get("deleted"):
                 self.pidstore_handler.delete(self.id, self)
             else:
+                self.process_deleted_records()
                 self.pidstore_handler.update(self.id, self)
             self.update_model_created_with_legacy_creation_date()
             flag_modified(self.model, "json")

@@ -9,8 +9,11 @@
 import requests
 import structlog
 from flask import current_app
-from invenio_pidstore.models import PIDStatus, RecordIdentifier
+from invenio_pidstore.errors import PIDAlreadyExists
+from invenio_pidstore.models import PersistentIdentifier, PIDStatus, RecordIdentifier
+from sqlalchemy.exc import IntegrityError
 
+from inspirehep.pidstore.errors import PIDAlreadyExistsError
 from inspirehep.pidstore.providers.base import InspireBaseProvider
 
 LOGGER = structlog.getLogger()
@@ -38,26 +41,54 @@ class InspireRecordIdProvider(InspireBaseProvider):
     default_status = PIDStatus.RESERVED
 
     @classmethod
-    def create(cls, object_type=None, object_uuid=None, **kwargs):
+    def create(
+        cls,
+        object_type=None,
+        object_uuid=None,
+        pid_type=None,
+        force=False,
+        pid_value=None,
+        status=None,
+        **kwargs
+    ):
         """Create a new record identifier."""
-        pid_value = kwargs.get("pid_value")
+        pid_value = str(pid_value) if pid_value else None
         if pid_value is None:
             if current_app.config.get("LEGACY_PID_PROVIDER"):
-                kwargs["pid_value"] = get_next_pid_from_legacy()
-                LOGGER.info("Control number from legacy", recid=kwargs["pid_value"])
-                RecordIdentifier.insert(kwargs["pid_value"])
+                pid_value = str(get_next_pid_from_legacy())
+                LOGGER.info("Control number from legacy", recid=pid_value)
+                RecordIdentifier.insert(pid_value)
             else:
-                kwargs["pid_value"] = str(RecordIdentifier.next())
-                LOGGER.info(
-                    "Control number from RecordIdentifier", recid=kwargs["pid_value"]
-                )
+                pid_value = str(RecordIdentifier.next())
+                LOGGER.info("Control number from RecordIdentifier", recid=pid_value)
         else:
-            LOGGER.info("Control number provided", recid=kwargs["pid_value"])
-            RecordIdentifier.insert(kwargs["pid_value"])
+            LOGGER.info("Control number provided", recid=pid_value, force=force)
 
-        kwargs.setdefault("status", cls.default_status)
+            if not RecordIdentifier.query.filter_by(recid=pid_value).one_or_none():
+                RecordIdentifier.insert(pid_value)
+
+        status = cls.default_status
         if object_type and object_uuid:
-            kwargs["status"] = PIDStatus.REGISTERED
-        return super().create(
-            object_type=object_type, object_uuid=object_uuid, **kwargs
-        )
+            status = PIDStatus.REGISTERED
+        pid_from_db = PersistentIdentifier.query.filter_by(
+            pid_value=pid_value, pid_provider=cls.pid_provider, pid_type=pid_type
+        ).one_or_none()
+        if pid_from_db and force:
+            pid_from_db.object_uuid = object_uuid
+            pid_from_db.status = status
+        elif pid_from_db:
+            if pid_from_db.object_uuid != object_uuid:
+                raise PIDAlreadyExists(cls.pid_type, pid_value)
+            else:
+                pid_from_db.status = status
+
+        else:
+            return super().create(
+                object_type=object_type,
+                object_uuid=object_uuid,
+                pid_type=pid_type,
+                pid_value=pid_value,
+                status=status,
+                **kwargs
+            )
+        return cls(pid_from_db)

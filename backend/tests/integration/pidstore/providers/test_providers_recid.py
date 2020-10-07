@@ -36,6 +36,23 @@ def test_provider_with_pid_value(inspire_app):
     }
     provider = InspireRecordIdProvider.create(**provide)
 
-    assert provider.pid.pid_value == 1
+    assert provider.pid.pid_value == "1"
     assert "pid" == provider.pid.pid_type
     assert PIDStatus.REGISTERED == provider.pid.status
+
+
+def test_provider_reclaims_other_record_pid(inspire_app):
+    record = RecordMetadataFactory()
+    provide = {"object_type": "rec", "object_uuid": record.id, "pid_type": "pid"}
+    provider = InspireRecordIdProvider.create(**provide)
+
+    record2 = RecordMetadataFactory()
+    provide["object_uuid"] = record2.id
+    provide["pid_value"] = provider.pid.pid_value
+    provide["force"] = True
+
+    provider2 = InspireRecordIdProvider.create(**provide)
+
+    assert provider2.pid.id == provider.pid.id
+    assert provider2.pid.object_uuid == record2.id
+    assert provider2.pid.status == PIDStatus.REGISTERED

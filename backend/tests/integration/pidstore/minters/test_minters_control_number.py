@@ -341,3 +341,75 @@ def test_control_number_not_deleting_pid_when_record_removed(inspire_app):
     cn_pid = PersistentIdentifier.query.filter_by(pid_type="lit").one()
 
     cn_pid.status == PIDStatus.DELETED
+
+
+def test_control_number_redirects_when_new_record_have_it_in_deleted_records(
+    inspire_app
+):
+    record = create_record("lit")
+    ref_to_redirect = record["self"]
+    cn = str(record["control_number"])
+
+    data = {"deleted_records": [ref_to_redirect]}
+    record2 = create_record("lit", data=data)
+
+    pid = PersistentIdentifier.query.filter_by(pid_type="lit", pid_value=cn).one()
+    assert pid.object_uuid == record2.id
+
+
+def test_control_number_redirects_many_when_new_record_have_it_in_deleted_records(
+    inspire_app
+):
+    record = create_record("lit")
+    ref_to_redirect = record["self"]
+    cn = str(record["control_number"])
+
+    record2 = create_record("lit")
+    ref_to_redirect2 = record2["self"]
+    cn2 = str(record["control_number"])
+
+    data = {"deleted_records": [ref_to_redirect, ref_to_redirect2]}
+    record_new = create_record("lit", data=data)
+
+    pid = PersistentIdentifier.query.filter_by(pid_type="lit", pid_value=cn).one()
+    pid2 = PersistentIdentifier.query.filter_by(pid_type="lit", pid_value=cn2).one()
+    assert pid.object_uuid == record_new.id
+    assert pid2.object_uuid == record_new.id
+
+
+def test_control_number_redirects_when_updated_record_have_it_in_deleted_records(
+    inspire_app
+):
+    record = create_record("lit")
+    ref_to_redirect = record["self"]
+    cn = str(record["control_number"])
+
+    record2 = create_record("lit")
+    data = dict(record2)
+    data.update({"deleted_records": [ref_to_redirect]})
+    record2.update(data)
+
+    pid = PersistentIdentifier.query.filter_by(pid_type="lit", pid_value=cn).one()
+    assert pid.object_uuid == record2.id
+
+
+def test_control_number_redirects_many_when_updated_record_have_it_in_deleted_records(
+    inspire_app
+):
+    record = create_record("lit")
+    ref_to_redirect = record["self"]
+    cn = str(record["control_number"])
+
+    record2 = create_record("lit")
+    ref_to_redirect2 = record2["self"]
+    cn2 = str(record["control_number"])
+
+    record_new = create_record("lit")
+    data = dict(record_new)
+    data.update({"deleted_records": [ref_to_redirect, ref_to_redirect2]})
+    record_new.update(data)
+
+    pid = PersistentIdentifier.query.filter_by(pid_type="lit", pid_value=cn).one()
+    pid2 = PersistentIdentifier.query.filter_by(pid_type="lit", pid_value=cn2).one()
+    assert pid.object_uuid == record_new.id
+    assert pid2.object_uuid == record_new.id

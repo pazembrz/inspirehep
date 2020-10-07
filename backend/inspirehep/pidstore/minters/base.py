@@ -8,12 +8,14 @@
 import structlog
 from inspire_utils.helpers import force_list
 from inspire_utils.record import get_value
-from invenio_pidstore.errors import PIDAlreadyExists
+from invenio_pidstore.errors import PIDAlreadyExists, PIDDoesNotExistError
 from invenio_pidstore.models import PersistentIdentifier, PIDStatus
 
+from inspirehep.pidstore.api.utils import get_pid_from_record_uri
 from inspirehep.pidstore.errors import MissingSchema
 from inspirehep.pidstore.providers.external import InspireExternalIdProvider
 from inspirehep.pidstore.providers.recid import InspireRecordIdProvider
+from inspirehep.utils import flatten_list
 
 from ..errors import PIDAlreadyExistsError
 
@@ -38,7 +40,36 @@ class Minter:
     def get_pid_values(self):
         pid_values = get_value(self.data, self.pid_value_path, default=[])
         if not isinstance(pid_values, (tuple, list)):
-            pid_values = force_list(pid_values)
+            pid_values = [str(pid_value) for pid_value in force_list(pid_values)]
+        return set(pid_values)
+
+    def get_all_pids_from_record_represented_by_pid(self, pid_value):
+        result = PersistentIdentifier.query.filter(
+            PersistentIdentifier.pid_type == self.pid_type,
+            PersistentIdentifier.pid_value == pid_value,
+        ).one_or_none()
+        if result and result.object_uuid != self.object_uuid:
+            all_pids = flatten_list(
+                PersistentIdentifier.query.with_entities("pid_value")
+                .filter(
+                    PersistentIdentifier.pid_type == self.pid_type,
+                    PersistentIdentifier.object_uuid == result.object_uuid,
+                )
+                .all()
+            )
+            return all_pids
+        return None
+
+    def get_pids_to_retake(self):
+        pid_values = []
+        if "deleted_records" in self.data:
+            ref_path = "deleted_records.$ref"
+            for rec in flatten_list(get_value(self.data, ref_path, [])):
+                pid_type, pid_value = get_pid_from_record_uri(rec)
+                if pid_type == self.pid_type:
+                    pids = self.get_all_pids_from_record_represented_by_pid(pid_value)
+                    if pids:
+                        pid_values.extend(pids)
         return set(pid_values)
 
     @property
@@ -73,23 +104,31 @@ class Minter:
     def mint(cls, object_uuid, data):
         minter = cls(object_uuid, data)
         minter.validate()
-        pid_values = minter.get_pid_values()
-
-        for pid_value in pid_values:
+        for pid_value in minter.get_pid_values():
             minter.create(pid_value)
+        for pid_value in minter.get_pids_to_retake():
+            minter.create(pid_value, force=True)
         return minter
 
     @classmethod
-    def update(cls, object_uuid, data):
+    def update(cls, object_uuid, data, delete_missing=True):
         minter = cls(object_uuid, data)
         minter.validate()
         pids_in_db = minter.get_all_pidstore_pids()
         pids_requested = minter.get_pid_values()
-        pids_to_delete = pids_in_db - pids_requested
+        pids_to_retake = minter.get_pids_to_retake()
+        for pid_value in pids_to_retake - pids_in_db:
+            minter.create(pid_value, force=True)
+
+        if delete_missing:
+            pids_to_delete = pids_in_db - pids_requested - pids_to_retake
+            if pids_to_delete:
+                minter.delete(object_uuid, None, pids_to_delete)
+
         pids_to_create = pids_requested - pids_in_db
-        minter.delete(object_uuid, None, pids_to_delete)
         for pid_value in pids_to_create:
             minter.create(pid_value)
+
         return minter
 
     @classmethod
@@ -98,6 +137,7 @@ class Minter:
             "Some pids for record are going to be removed",
             pids_to_delete=pids_to_delete or "all",
             object_uuid=object_uuid,
+            pid_type=cls.pid_type,
         )
         minter = cls(object_uuid, data)
         if pids_to_delete is None:
@@ -137,12 +177,3 @@ class ControlNumberMinter(Minter):
         data["control_number"] = int(record_id_provider.pid.pid_value)
 
         return minter
-
-    @classmethod
-    def update(cls, object_uuid, data):
-        pass
-
-    @classmethod
-    def delete(cls, object_uuid, data):
-        if "control_number" in data:
-            cls.provider.get(data["control_number"], cls.pid_type).delete()

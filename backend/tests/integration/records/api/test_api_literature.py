@@ -2263,3 +2263,89 @@ def test_arxiv_url_also_supports_format_alias(inspire_app):
 
     assert response_bibtex.status_code == 200
     assert response_bibtex.content_type == expected_bibtex_type
+
+
+def test_creating_record_with_deleted_records_key_deletes_proper_records(inspire_app):
+    record = create_record("lit")
+    ref_to_redirect = record["self"]
+    cn = str(record["control_number"])
+
+    data = {"deleted_records": [ref_to_redirect]}
+    record2 = create_record("lit", data=data)
+
+    deleted_record = LiteratureRecord.get_record(record.id)
+    new_record_acquired_from_redirected_pid = LiteratureRecord.get_record_by_pid_value(
+        cn
+    )
+    assert deleted_record["deleted"] == True
+    assert new_record_acquired_from_redirected_pid == record2
+    pid = PersistentIdentifier.query.filter_by(pid_type="lit", pid_value=cn).one()
+    assert pid.object_uuid == record2.id
+
+
+def test_updating_record_with_deleted_records_key_deletes_proper_records(inspire_app):
+    record = create_record("lit")
+    ref_to_redirect = record["self"]
+    cn = str(record["control_number"])
+
+    record2 = create_record("lit")
+    data = dict(record2)
+    data.update({"deleted_records": [ref_to_redirect]})
+    record2.update(data)
+
+    deleted_record = LiteratureRecord.get_record(record.id)
+    new_record_acquired_from_redirected_pid = LiteratureRecord.get_record_by_pid_value(
+        cn
+    )
+    assert deleted_record["deleted"] == True
+    assert new_record_acquired_from_redirected_pid == record2
+    pid = PersistentIdentifier.query.filter_by(pid_type="lit", pid_value=cn).one()
+    assert pid.object_uuid == record2.id
+
+
+def test_deleted_record_on_update_wont_reclaim_its_pid(inspire_app):
+    record = create_record("lit")
+    record.delete()
+    ref_to_redirect = record["self"]
+    cn = str(record["control_number"])
+
+    data = {"deleted_records": [ref_to_redirect]}
+    record2 = create_record("lit", data=data)
+
+    deleted_record = LiteratureRecord.get_record(record.id)
+    deleted_data = dict(deleted_record)
+    deleted_record.update(deleted_data)
+
+    pid = PersistentIdentifier.query.filter_by(pid_type="lit", pid_value=cn).one()
+    assert pid.object_uuid == record2.id
+    new_record_acquired_from_redirected_pid = LiteratureRecord.get_record_by_pid_value(
+        cn
+    )
+    assert new_record_acquired_from_redirected_pid == record2
+
+
+def test_reclaim_all_pids_of_a_record_which_reclaimed_another_pid(inspire_app):
+    record = create_record("lit")
+    ref_to_redirect = record["self"]
+
+    data = {"deleted_records": [ref_to_redirect]}
+    record2 = create_record("lit", data=data)
+
+    ref_to_redirect2 = record2["self"]
+
+    data2 = {"deleted_records": [ref_to_redirect2]}
+    record3 = create_record("lit", data=data2)
+
+    rec1_pids = PersistentIdentifier.query.filter_by(
+        pid_type="lit", object_uuid=record.id
+    )
+    rec2_pids = PersistentIdentifier.query.filter_by(
+        pid_type="lit", object_uuid=record2.id
+    )
+    rec3_pids = PersistentIdentifier.query.filter_by(
+        pid_type="lit", object_uuid=record3.id
+    )
+
+    assert rec1_pids.count() == 0
+    assert rec2_pids.count() == 0
+    assert rec3_pids.count() == 3
