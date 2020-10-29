@@ -8,9 +8,14 @@ from copy import deepcopy
 
 from flask import abort
 from inspire_dojson.utils import strip_empty_values
+from invenio_pidstore.models import PersistentIdentifier, PIDStatus
 from invenio_records_rest.schemas.json import RecordSchemaJSONV1
 from marshmallow import fields, post_dump, pre_dump
 from marshmallow.schema import Schema
+
+from inspirehep.pidstore.api import PidStoreBase
+from inspirehep.pidstore.models import InspireRedirect
+from inspirehep.records.utils import get_ref_from_pid
 
 
 class EnvelopeSchema(RecordSchemaJSONV1):
