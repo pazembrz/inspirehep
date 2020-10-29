@@ -19,7 +19,7 @@ from inspire_schemas.api import validate as schema_validate
 from inspire_utils.record import get_value
 from invenio_db import db
 from invenio_pidstore.errors import PIDDoesNotExistError
-from invenio_pidstore.models import PersistentIdentifier, RecordIdentifier
+from invenio_pidstore.models import PersistentIdentifier, PIDStatus, RecordIdentifier
 from invenio_records.api import Record
 from invenio_records.errors import MissingModelError
 from invenio_records.models import RecordMetadata
@@ -64,6 +64,8 @@ class InspireRecord(Record):
         if not pid_type:
             pid_type = cls.pid_type
         pid = PersistentIdentifier.get(pid_type, pid_value)
+        if pid.is_redirected():
+            pid = pid.get_redirect()
         return pid.object_uuid
 
     @classmethod
@@ -306,6 +308,34 @@ class InspireRecord(Record):
         This method does nothing, instead all the work is done in ``update``.
         """
 
+    def redirect_pid(self, ref):
+        _, pid_value = PidStoreBase.get_pid_from_record_uri(ref)
+        old_pid = PersistentIdentifier.get(self.pid_type, pid_value)
+        if old_pid.is_redirected():
+            LOGGER.warning("This pid is already redirected!", self.pid_type, pid_value)
+            return
+
+        if not old_pid.is_registered():
+            old_pid.status = PIDStatus.REGISTERED
+
+        old_pid_object_uuid = str(old_pid.object_uuid)
+        new_pid = PersistentIdentifier.get(self.pid_type, self["control_number"])
+        old_pid.redirect(new_pid)
+
+        old_record = self.get_record(old_pid_object_uuid)
+        if not old_record.get("deleted"):
+            old_record.delete()
+
+        return old_pid_object_uuid
+
+    def redirect_pids(self, pids):
+        for pid in pids:
+            if not pid.get("uuid"):
+                previous_uuid = self.redirect_pid(pid["$ref"])
+                if previous_uuid:
+                    pid["uuid"] = previous_uuid
+        return pids
+
     def update(self, data, *args, **kwargs):
         if not self.get("deleted", False):
             if "control_number" not in data:
@@ -321,13 +351,19 @@ class InspireRecord(Record):
         with db.session.begin_nested():
             self.clear()
             super().update(data)
+
             self.model.json = dict(self)
             self.validate()
             if data.get("deleted"):
                 self.pidstore_handler.delete(self.id, self)
             else:
                 self.pidstore_handler.update(self.id, self)
+                if data.get("deleted_records"):
+                    data["deleted_records"] = self.redirect_pids(
+                        data["deleted_records"]
+                    )
             self.update_model_created_with_legacy_creation_date()
+            super().update(data)
             flag_modified(self.model, "json")
             db.session.add(self.model)
 

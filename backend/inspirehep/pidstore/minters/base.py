@@ -145,4 +145,6 @@ class ControlNumberMinter(Minter):
     @classmethod
     def delete(cls, object_uuid, data):
         if "control_number" in data:
-            cls.provider.get(data["control_number"], cls.pid_type).delete()
+            pid_provider = cls.provider.get(data["control_number"], cls.pid_type)
+            if pid_provider.pid.object_uuid == object_uuid:
+                pid_provider.delete()

@@ -6,14 +6,15 @@
 # the terms of the MIT License; see LICENSE file for more details.
 
 """INSPIRE module that adds more fun to the platform."""
-
-
 import json
+import time
 from copy import copy, deepcopy
+from random import random
 
 import pytest
 from helpers.providers.faker import faker
 from helpers.utils import create_pidstore, create_record, create_record_factory
+from invenio_pidstore.errors import PIDDoesNotExistError
 from invenio_pidstore.models import PersistentIdentifier, PIDStatus, RecordIdentifier
 from invenio_records.models import RecordMetadata
 
@@ -427,3 +428,96 @@ def test_get_enhanced_es_data_do_not_change_original_record(inspire_app, datadir
     record.get_enhanced_es_data()
 
     assert sorted(record) == sorted(original_data)
+
+
+def test_redirect_and_delete_record_from_deleted_records_field(inspire_app):
+    record_to_delete = create_record("lit")
+    record = create_record("lit")
+    data = dict(record)
+    data["deleted_records"] = [record_to_delete["self"]]
+    record.update(data)
+
+    deleted_records = record["deleted_records"]
+
+    assert len(deleted_records) == 1
+    assert deleted_records[0]["uuid"] == str(record_to_delete.id)
+    old_pid = PersistentIdentifier.get(
+        record_to_delete.pid_type, record_to_delete["control_number"]
+    )
+    assert old_pid.is_redirected()
+    record_redirected = LiteratureRecord.get_record_by_pid_value(
+        record_to_delete["control_number"]
+    )
+    assert record_redirected.id == record.id
+
+    original_record = LiteratureRecord.get_record(record_to_delete.id)
+    assert original_record["deleted"] == True
+
+
+def test_redirect_deleted_record_from_deleted_records_field(inspire_app):
+    record_deleted = create_record("lit")
+    record_deleted.delete()
+    record = create_record("lit")
+    data = dict(record)
+    data["deleted_records"] = [record_deleted["self"]]
+    record.update(data)
+
+    deleted_records = record["deleted_records"]
+
+    assert len(deleted_records) == 1
+    assert deleted_records[0]["uuid"] == str(record_deleted.id)
+    old_pid = PersistentIdentifier.get(
+        record_deleted.pid_type, record_deleted["control_number"]
+    )
+    assert old_pid.is_redirected()
+    record_redirected = LiteratureRecord.get_record_by_pid_value(
+        record_deleted["control_number"]
+    )
+    assert record_redirected.id == record.id
+
+    original_record = LiteratureRecord.get_record(record_deleted.id)
+    assert original_record["deleted"] == True
+
+
+def test_redirect_and_delete_many_records_from_deleted_records_field(inspire_app):
+    records_to_delete = [create_record("lit") for _ in range(2)]
+    record = create_record("lit")
+    data = dict(record)
+
+    data["deleted_records"] = [record["self"] for record in records_to_delete]
+
+    record.update(data)
+
+    deleted_records = record["deleted_records"]
+
+    assert len(deleted_records) == 2
+    assert deleted_records[0]["uuid"] == str(records_to_delete[0].id)
+    assert deleted_records[1]["uuid"] == str(records_to_delete[1].id)
+
+    old_pid_1 = PersistentIdentifier.get(
+        records_to_delete[0].pid_type, records_to_delete[0]["control_number"]
+    )
+    old_pid_2 = PersistentIdentifier.get(
+        records_to_delete[1].pid_type, records_to_delete[1]["control_number"]
+    )
+
+    assert old_pid_1.is_redirected()
+    assert old_pid_2.is_redirected()
+
+    record_redirected_1 = LiteratureRecord.get_record_by_pid_value(
+        records_to_delete[0]["control_number"]
+    )
+    record_redirected_2 = LiteratureRecord.get_record_by_pid_value(
+        records_to_delete[1]["control_number"]
+    )
+
+    assert record_redirected_1.id == record.id
+    assert record_redirected_2.id == record.id
+
+
+def test_redirect_record_breaks_on_wrong_pid(inspire_app):
+    record = create_record("lit")
+    data = dict(record)
+    data["deleted_records"] = [{"$ref": f"http://localhost:8080/literature/987654321"}]
+    with pytest.raises(PIDDoesNotExistError):
+        record.update(data)
